@@ -86,9 +86,11 @@ void GenerateTree(int x, int z) {
 void GenerateWorld() {
     for (int x = 0; x < WORLD_X; ++x) {
         for (int z = 0; z < WORLD_Z; ++z) {
-            const float wave = std::sin(x * 0.21f) * 1.7f + std::cos(z * 0.19f) * 1.5f
-                             + std::sin((x + z) * 0.11f);
-            const int height = std::clamp(7 + static_cast<int>(wave), 3, 12);
+            const float broad = std::sin(x * 0.21f) * 1.7f + std::cos(z * 0.19f) * 1.5f
+                              + std::sin((x + z) * 0.11f);
+            const float detail = std::sin(x * 0.73f + z * 1.17f) * 0.65f
+                               + std::cos(z * 0.61f - x * 0.37f) * 0.45f;
+            const int height = std::clamp(7 + static_cast<int>(broad + detail), 3, 13);
             for (int y = 0; y <= height; ++y) {
                 if (y == height) world[x][y][z] = height <= 5 ? SAND : GRASS;
                 else if (y >= height - 3) world[x][y][z] = DIRT;
@@ -100,6 +102,9 @@ void GenerateWorld() {
     GenerateTree(22, 13);
     GenerateTree(34, 31);
     GenerateTree(12, 37);
+    GenerateTree(5, 25);
+    GenerateTree(27, 39);
+    GenerateTree(41, 12);
 }
 
 bool FindTarget(const Ray& ray, Cell& target, Vector3& normal) {
@@ -126,18 +131,55 @@ bool FindTarget(const Ray& ray, Cell& target, Vector3& normal) {
     return found;
 }
 
-void DrawWorld() {
-    // Draw by 16x16 terrain regions (chunks); this is the first step toward mesh batching.
+bool IsSolidAt(int x, int y, int z) {
+    return InBounds(x, y, z) && world[x][y][z] != AIR;
+}
+
+bool HasVisibleFace(int x, int y, int z) {
+    // A block completely surrounded by other blocks cannot be seen, so skip it.
+    return !IsSolidAt(x + 1, y, z) || !IsSolidAt(x - 1, y, z) ||
+           !IsSolidAt(x, y + 1, z) || !IsSolidAt(x, y - 1, z) ||
+           !IsSolidAt(x, y, z + 1) || !IsSolidAt(x, y, z - 1);
+}
+
+Color MixColor(Color a, Color b, float amount) {
+    amount = std::clamp(amount, 0.0f, 1.0f);
+    return {
+        static_cast<unsigned char>(a.r + (b.r - a.r) * amount),
+        static_cast<unsigned char>(a.g + (b.g - a.g) * amount),
+        static_cast<unsigned char>(a.b + (b.b - a.b) * amount),
+        255
+    };
+}
+
+Color GetBlockTint(int x, int y, int z, const Camera3D& camera) {
+    // A lightweight block-level lighting approximation: higher terrain is brighter.
+    int brightness = std::clamp(218 + (y - 6) * 4, 185, 255);
+    if (!IsSolidAt(x, y + 1, z)) brightness = std::min(255, brightness + 12);
+    Color tint = {static_cast<unsigned char>(brightness),
+                  static_cast<unsigned char>(brightness),
+                  static_cast<unsigned char>(brightness), 255};
+
+    // Blend distant blocks toward the sky color to create atmospheric distance fog.
+    const Vector3 center = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
+    const float distance = Vector3Distance(camera.position, center);
+    const float fog = std::clamp((distance - 18.0f) / 34.0f, 0.0f, 0.82f);
+    return MixColor(tint, {151, 198, 232, 255}, fog);
+}
+
+void DrawWorld(const Camera3D& camera) {
+    // Group traversal by 16x16 regions and omit fully hidden blocks.
+    // This reduces draw calls for enclosed terrain while preserving the simple prototype renderer.
     for (int cx = 0; cx < WORLD_X; cx += CHUNK_SIZE) {
         for (int cz = 0; cz < WORLD_Z; cz += CHUNK_SIZE) {
             for (int x = cx; x < std::min(cx + CHUNK_SIZE, WORLD_X); ++x) {
                 for (int z = cz; z < std::min(cz + CHUNK_SIZE, WORLD_Z); ++z) {
                     for (int y = 0; y < WORLD_Y; ++y) {
                         const Block b = world[x][y][z];
-                        if (b == AIR) continue;
+                        if (b == AIR || !HasVisibleFace(x, y, z)) continue;
                         DrawCubeTexture(textures[b],
                             {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
-                            1.0f, 1.0f, 1.0f, WHITE);
+                            1.0f, 1.0f, 1.0f, GetBlockTint(x, y, z, camera));
                     }
                 }
             }
@@ -148,7 +190,7 @@ void DrawWorld() {
 
 int main() {
     SetConfigFlags(FLAG_MSAA_4X_HINT);
-    InitWindow(1280, 720, "LimeCraft Alpha 0.2");
+    InitWindow(1280, 720, "LimeCraft Alpha 0.3");
     SetTargetFPS(60);
     DisableCursor();
 
@@ -191,7 +233,7 @@ int main() {
         BeginDrawing();
         ClearBackground({151, 198, 232, 255});
         BeginMode3D(camera);
-        DrawWorld();
+        DrawWorld(camera);
         EndMode3D();
 
         const int cx = GetScreenWidth() / 2, cy = GetScreenHeight() / 2;
@@ -199,9 +241,10 @@ int main() {
         DrawLine(cx, cy - 7, cx, cy + 7, WHITE);
 
         DrawRectangle(12, 12, 405, 88, Fade(BLACK, 0.55f));
-        DrawText("LIMECRAFT  |  ALPHA 0.2", 24, 20, 21, LIME);
+        DrawText("LIMECRAFT  |  ALPHA 0.3", 24, 20, 21, LIME);
         DrawText("WASD: move   SPACE: jump   Mouse: look", 24, 50, 14, RAYWHITE);
         DrawText("LMB: break   RMB: place   1-5: select", 24, 70, 14, RAYWHITE);
+        DrawText("Terrain detail | distance fog | hidden-block culling", 24, 88, 12, SKYBLUE);
 
         const int slot = 48, gap = 6;
         const int startX = GetScreenWidth() / 2 - (5 * slot + 4 * gap) / 2;
