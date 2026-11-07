@@ -1,0 +1,11 @@
+/build/
+/cmake-build-*/
+/.cache/
+.vscode/
+.idea/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
