@@ -1,0 +1,45 @@
+name: Build LimeCraft for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build LimeCraft
+        run: cmake --build build --config Release --parallel
+
+      - name: Prepare res package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path res | Out-Null
+          Copy-Item build/Release/limecraft.exe res/LimeCraft.exe
+          @"
+          LimeCraft Alpha 0.3 - Windows build
+
+          Run LimeCraft.exe to start the game.
+          This is an early development build.
+          "@ | Set-Content res/README.txt
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: LimeCraft-Alpha-0.3-Windows
+          path: res/
+          if-no-files-found: error
